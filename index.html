@@ -146,6 +146,11 @@ tfoot td{font-weight:600;border-bottom:0;border-top:2px solid var(--ink)}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--ink2)}
 .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 
+input[type=checkbox]{width:20px;min-height:20px;height:20px;accent-color:var(--accent);flex:none;margin-bottom:10px}
+.impbox{border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;background:var(--surface2)}
+.imp-h{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.warns{margin:0;padding-left:18px;color:var(--warn);font-size:13px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
 .actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;padding-top:4px}
 [hidden]{display:none!important}
 .row2{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
@@ -165,6 +170,7 @@ details[open] summary{margin-bottom:12px}
 <div id="app"></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script>
@@ -237,11 +243,18 @@ function seed(){
   return normState({insumos:list,recetas:[r1,r2],mov:[],seeded:true,ui:{recetaId:r1.id,tab:'inicio'}});
 }
 var S=loadState()||seed();
-var dlg=null;
+var dlg=null,impOpen=false,impData=null;
 
 /* ---------- inventario FIFO ---------- */
 function insById(id){for(var i=0;i<S.insumos.length;i++)if(S.insumos[i].id===id)return S.insumos[i];return null;}
-function findIns(name){var n=norm(name);if(!n)return null;for(var i=0;i<S.insumos.length;i++)if(norm(S.insumos[i].name)===n)return S.insumos[i];return null;}
+function key(s){return norm(s).replace(/[–—-]/g,' ').replace(/\b(de|del|la|el|los|las|en|con|y)\b/g,' ').replace(/\s+/g,' ').trim();}
+function findIns(name){
+  var n=norm(name);if(!n)return null;var i;
+  for(i=0;i<S.insumos.length;i++)if(norm(S.insumos[i].name)===n)return S.insumos[i];
+  var k=key(name);
+  for(i=0;i<S.insumos.length;i++)if(key(S.insumos[i].name)===k)return S.insumos[i];
+  return null;
+}
 function lotsSorted(ins){return ins.lots.filter(function(l){return l.left>1e-9;}).sort(function(a,b){return a.date<b.date?-1:a.date>b.date?1:(a.id<b.id?-1:1);});}
 function lastPrice(ins){if(!ins.lots.length)return ins.refPrice||0;var a=ins.lots.slice().sort(function(x,y){return x.date<y.date?1:x.date>y.date?-1:(x.id<y.id?1:-1);});return a[0].price;}
 function unitPrice(ins){var s=lotsSorted(ins);return s.length?s[0].price:lastPrice(ins);}
@@ -325,7 +338,8 @@ function inicioView(){
 }
 
 function recetasView(){
-  return '<div class="page-h"><h1>Recetas</h1><button class="btn primary" data-act="r-new">Nueva receta</button></div>'+
+  return '<div class="page-h"><h1>Recetas</h1><div class="btns"><button class="btn" data-act="imp-toggle">Subir Excel</button><button class="btn primary" data-act="r-new">Nueva receta</button></div></div>'+
+    (impOpen?impCard():'')+
     (S.recetas.length?'<div class="list">'+S.recetas.map(recipeRow).join('')+'</div>':'<div class="card"><p class="empty">Todavía no tienes recetas. Crea la primera con el botón «Nueva receta».</p></div>');
 }
 
@@ -528,6 +542,8 @@ function updateCompraCalc(){
 
 app.addEventListener('change',function(e){
   var t=e.target,f=t.dataset.f,sc=t.dataset.scope,r=cur();
+  if(t.id==='xl-file'){var xf=t.files&&t.files[0];if(xf)readExcel(xf);return;}
+  if(t.dataset.imp){var ri=impData&&impData.recipes[+t.dataset.i];if(ri){var w=t.dataset.imp;if(w==='on'){ri.on=t.checked;render();}else if(w==='name'){ri.name=t.value.trim()||ri.name;}else if(w==='por'){ri.por=num(t.value)||1;}}return;}
   if(t.id==='a-unit'){updateAddHint();return;}
   if(t.id==='a-prod'){updateAddHint();return;}
   if(t.id==='c-unit'){updateCompraCalc();return;}
@@ -571,6 +587,10 @@ app.addEventListener('click',function(e){
   else if(a==='import-text')importText($('#imp-text').value);
   else if(a==='reset-example')ask('Esto reemplaza todo lo que tienes por los datos de ejemplo de la ficha.','Reemplazar',function(){S=seed();});
   else if(a==='wipe')ask('¿Borrar todos los productos, compras y recetas? No se puede deshacer.','Borrar todo',function(){S=normState({insumos:[],recetas:[],mov:[],ui:{}});});
+  else if(a==='imp-toggle'){impOpen=!impOpen;impData=null;render();}
+  else if(a==='imp-close'){impOpen=false;impData=null;render();}
+  else if(a==='imp-go')commitImport();
+  else if(a==='tpl')downloadTemplate();
   else if(a==='dlg-no'){dlg=null;render();}
   else if(a==='dlg-ok'){var fn=dlg&&dlg.ok;dlg=null;if(fn)fn();persist();render();}
 });
@@ -579,6 +599,167 @@ function leaveRecipe(){
   if(!r.name.trim()&&!r.items.length){S.recetas=S.recetas.filter(function(x){return x.id!==r.id;});S.ui.recetaId=S.recetas.length?S.recetas[S.recetas.length-1].id:null;}
   else r.draft=false;
   persist();
+}
+
+/* ---------- importar desde Excel ---------- */
+function cs(v){return v==null?'':String(v).trim();}
+function isNum(x){return typeof x==='number'&&isFinite(x);}
+function nice(s){s=cs(s).replace(/\s+/g,' ');if(!s)return s;if(s===s.toUpperCase()&&/[A-ZÁÉÍÓÚÑ]/.test(s))s=s.toLowerCase();return s.charAt(0).toUpperCase()+s.slice(1);}
+function unitOf(u){
+  var t=norm(u).replace(/\./g,'');
+  var m={kilo:'kg',kilos:'kg',kg:'kg',kgs:'kg',kilogramo:'kg',kilogramos:'kg',litro:'L',litros:'L',lt:'L',lts:'L',l:'L',unidad:'un',unidades:'un',un:'un',u:'un',und:'un',gramo:'g',gramos:'g',gr:'g',grs:'g',g:'g',ml:'ml',cc:'ml',mililitro:'ml',mililitros:'ml'};
+  return m[t]||null;
+}
+function newRc(name){return {name:name,cat:'',por:1,tiempo:'',notas:'',makeup:30,items:[],warns:[],on:true};}
+
+function parseFicha(sn,rows){
+  var hdr=-1,cB=1,i,j,r;
+  for(i=0;i<rows.length&&hdr<0;i++){r=rows[i]||[];for(j=0;j<r.length;j++){if(/productos ordenados/i.test(cs(r[j]))){hdr=i;cB=j;break;}}}
+  if(hdr<0)return null;
+  var h=rows[hdr],cU=cB+1,cP=-1,cEnd=h.length;
+  for(j=cU+1;j<h.length;j++){if(/^total$/i.test(cs(h[j]))){cEnd=j;break;}}
+  for(j=0;j<h.length;j++){if(/precio/i.test(cs(h[j])))cP=j;}
+  var rc=newRc(nice(sn)),foundPor=false;
+  for(i=0;i<hdr;i++){r=rows[i]||[];for(j=0;j<r.length;j++){
+    var s=cs(r[j]);
+    if(/rendimiento/i.test(s)){for(var k2=i+1;k2<=hdr;k2++){var v=(rows[k2]||[])[j];if(isNum(v)&&v>0){rc.por=v;foundPor=true;break;}}}
+    else if(j===0&&s&&!rc.cat&&!/ficha t[eé]cnica|nombre de la preparaci|procesos de elaboraci/i.test(s))rc.cat=nice(s);
+  }}
+  if(!foundPor)rc.warns.push('No encontré cuántas porciones rinde. Revisa el número de porciones.');
+  for(i=hdr+1;i<rows.length;i++){
+    r=rows[i]||[];var name=cs(r[cB]),u=unitOf(cs(r[cU]));
+    if(!name||!u)continue;
+    var q=0;for(j=cU+1;j<cEnd;j++){var x=r[j];if(isNum(x))q+=x;else if(typeof x==='string'&&/^[\d.,]+$/.test(x.trim()))q+=num(x);}
+    var price=cP>=0&&isNum(r[cP])?r[cP]:null;
+    if(q<=0){rc.warns.push('«'+nice(name)+'» no tiene cantidad y no se importó.');continue;}
+    if(price==null&&cP>=0){var nx=rows[i+1]||[];if(!cs(nx[cB])&&isNum(nx[cP])){price=nx[cP];rc.warns.push('El precio de «'+nice(name)+'» estaba en la fila de abajo; lo usé igual.');}}
+    rc.items.push({name:nice(name),qty:q,unit:u,price:price==null?null:price/UNITS[u].f});
+  }
+  var mode='proc',acc={proc:[],tec:[],pc:[],tiempo:[]};
+  for(i=hdr+1;i<rows.length;i++){
+    var a=cs((rows[i]||[])[0]);if(!a)continue;
+    if(/^tiempos? de elaboraci/i.test(a)){mode='tiempo';continue;}
+    if(/^t[eé]cnicas/i.test(a)){mode='tec';continue;}
+    if(/^puntos cr[ií]ticos/i.test(a)){mode='pc';continue;}
+    acc[mode].push(a.replace(/[ \t]{3,}/g,' ').replace(/\s*\n\s*/g,'\n'));
+  }
+  rc.tiempo=acc.tiempo[0]||'';
+  var parts=[];
+  if(acc.proc.length)parts.push(acc.proc.join('\n\n'));
+  if(acc.tec.length)parts.push('Técnicas: '+acc.tec.join(' '));
+  if(acc.pc.length)parts.push('Puntos críticos:\n'+acc.pc.map(function(x){return '- '+x;}).join('\n'));
+  rc.notas=parts.join('\n\n');
+  for(i=hdr+1;i<rows.length;i++){r=rows[i]||[];for(j=0;j<r.length;j++){if(/^make ?up/i.test(cs(r[j]))){for(var c2=j+1;c2<r.length;c2++){if(isNum(r[c2])){rc.makeup=r[c2]<=1?Math.round(r[c2]*1000)/10:r[c2];break;}}}}}
+  return rc.items.length?[rc]:null;
+}
+function parsePlantilla(sn,rows){
+  var hi=-1,col={},i;
+  for(i=0;i<Math.min(rows.length,15)&&hi<0;i++){
+    var m={};
+    (rows[i]||[]).forEach(function(v,j){var t=norm(cs(v));
+      if(t==='receta')m.rec=j;else if(/^categor/.test(t))m.cat=j;else if(/^porcion/.test(t))m.por=j;else if(t==='producto'||t==='ingrediente')m.pro=j;else if(t==='cantidad')m.qty=j;else if(t==='unidad')m.uni=j;else if(/^precio/.test(t))m.pre=j;});
+    if(m.rec!=null&&m.pro!=null&&m.qty!=null&&m.uni!=null){hi=i;col=m;}
+  }
+  if(hi<0)return null;
+  var map={},list=[],last=null;
+  for(i=hi+1;i<rows.length;i++){
+    var r=rows[i]||[],rn=cs(r[col.rec]);if(rn)last=rn;
+    var pn=cs(r[col.pro]);if(!pn||!last)continue;
+    var rc=map[last];if(!rc){rc=newRc(last);map[last]=rc;list.push(rc);}
+    if(col.cat!=null&&cs(r[col.cat])&&!rc.cat)rc.cat=cs(r[col.cat]);
+    if(col.por!=null){var pv=isNum(r[col.por])?r[col.por]:num(r[col.por]);if(pv>0&&!rc.porSet){rc.por=pv;rc.porSet=true;}}
+    var u=unitOf(cs(r[col.uni])),q=isNum(r[col.qty])?r[col.qty]:num(r[col.qty]);
+    if(!u){rc.warns.push('«'+pn+'»: no entendí la unidad «'+cs(r[col.uni])+'».');continue;}
+    if(q<=0){rc.warns.push('«'+pn+'» no tiene cantidad y no se importó.');continue;}
+    var pr=col.pre!=null?(isNum(r[col.pre])?r[col.pre]:num(r[col.pre])):0;
+    rc.items.push({name:nice(pn),qty:q,unit:u,price:pr>0?pr:null});
+  }
+  return list;
+}
+function parseWorkbook(wb){
+  var out={recipes:[],notes:[]};
+  wb.SheetNames.forEach(function(sn){
+    var rows=XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:null,raw:true});
+    var res=parseFicha(sn,rows)||parsePlantilla(sn,rows);
+    if(res&&res.length)out.recipes=out.recipes.concat(res);
+    else if(!/instrucciones/i.test(sn))out.notes.push('No reconocí el formato de la hoja «'+sn+'».');
+  });
+  return out;
+}
+function analyze(rc){
+  var a={n:rc.items.length,matched:0,created:0,noPrice:0,cost:0,mismatch:[]};
+  rc.items.forEach(function(it){
+    var ins=findIns(it.name),base=UNITS[it.unit].base,q=it.qty*UNITS[it.unit].f;
+    if(ins){
+      if(ins.unit!==base){a.mismatch.push(it.name);a.n--;return;}
+      a.matched++;var p=unitPrice(ins)||it.price||0;if(p<=0)a.noPrice++;a.cost+=q*p;
+    }else{a.created++;if(!it.price)a.noPrice++;a.cost+=q*(it.price||0);}
+  });
+  return a;
+}
+function impCard(){
+  var d=impData,body='';
+  if(d){
+    var on=d.recipes.filter(function(x){return x.on;}).length;
+    body=d.recipes.map(function(rc,i){
+      var a=analyze(rc),w=rc.warns.slice();
+      if(a.mismatch.length)w.push('Se omitirán por unidad distinta a la del inventario: '+a.mismatch.join(', ')+'.');
+      return '<div class="impbox"><div class="imp-h"><input type="checkbox" id="imp-on-'+i+'" data-imp="on" data-i="'+i+'"'+(rc.on?' checked':'')+' aria-label="Importar esta receta">'+
+        '<div class="field grow"><label for="imp-n-'+i+'">Nombre</label><input id="imp-n-'+i+'" data-imp="name" data-i="'+i+'" value="'+esc(rc.name)+'"></div>'+
+        '<div class="field" style="width:120px"><label for="imp-p-'+i+'">Porciones</label><input id="imp-p-'+i+'" type="number" inputmode="decimal" min="1" step="any" data-imp="por" data-i="'+i+'" value="'+esc(rc.por)+'"></div></div>'+
+        '<p class="hint">'+a.n+' ingredientes · '+a.matched+' ya están en tu inventario · '+a.created+' productos nuevos'+(a.noPrice?' · <b>'+a.noPrice+' sin precio</b>':'')+'<br>Costo de materia prima: <b class="mono">'+money(a.cost)+'</b>. Compáralo con el total del Excel.</p>'+
+        (w.length?'<ul class="warns">'+w.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>':'')+'</div>';
+    }).join('')+d.notes.map(function(x){return '<p class="hint">'+esc(x)+'</p>';}).join('')+
+      (d.recipes.length?'<p class="hint">Las cantidades se toman como la receta completa para las porciones indicadas. Corrígelas aquí si no es así.</p><div class="btns"><button class="btn primary" data-act="imp-go"'+(on?'':' disabled')+'>Importar '+on+' receta'+(on===1?'':'s')+'</button><button class="btn" data-act="imp-close">Cancelar</button></div>':'');
+  }
+  return '<div class="card"><div class="card-h"><h2>Subir recetas desde Excel</h2><button class="btn sm ghost" data-act="imp-close">Cerrar</button></div>'+
+    '<p class="hint">Sirve con la ficha técnica de gastronomía (una receta por hoja) o con la plantilla simple. Antes de importar ves un resumen para revisar.</p>'+
+    '<div class="row2"><div class="field grow"><label for="xl-file">Archivo Excel (.xlsx)</label><input id="xl-file" type="file" accept=".xlsx,.xls"></div><button class="btn" data-act="tpl">Descargar plantilla</button></div>'+body+'</div>';
+}
+function readExcel(file){
+  if(!window.XLSX)return toast('No se pudo cargar el lector de Excel. Revisa tu conexión.',true);
+  file.arrayBuffer().then(function(buf){
+    var wb=XLSX.read(buf,{type:'array'});
+    impData=parseWorkbook(wb);render();
+    if(!impData.recipes.length)toast('No encontré recetas en ese archivo.',true);
+  }).catch(function(){toast('No pude leer ese archivo. ¿Es un Excel (.xlsx)?',true);});
+}
+function commitImport(){
+  if(!impData)return;
+  var made=0,skipped=0;
+  impData.recipes.forEach(function(rc){
+    if(!rc.on)return;
+    var items=[];
+    rc.items.forEach(function(it){
+      var base=UNITS[it.unit].base,ins=findIns(it.name);
+      if(!ins){ins={id:uid(),name:it.name,cat:'Extra',unit:base,refPrice:it.price||0,lots:[],extra:true};S.insumos.push(ins);}
+      else if(!ins.lots.length&&!ins.refPrice&&it.price)ins.refPrice=it.price;
+      if(ins.unit!==base){skipped++;return;}
+      var bq=it.qty*UNITS[it.unit].f,unit=ins.unit,qty=bq;
+      if(unit==='kg'&&bq<1){unit='g';qty=Math.round(bq*1e6)/1e3;}
+      else if(unit==='L'&&bq<1){unit='ml';qty=Math.round(bq*1e6)/1e3;}
+      items.push({id:uid(),insumoId:ins.id,qty:qty,unit:unit});
+    });
+    var name=rc.name||'Receta importada';
+    if(S.recetas.some(function(x){return norm(x.name)===norm(name);}))name+=' (importada)';
+    var hm=/(\d+)\s*h/i.exec(rc.tiempo),mm=/(\d+)\s*min/i.exec(rc.tiempo),mins=(hm?+hm[1]*60:0)+(mm?+mm[1]:0);
+    S.recetas.push({id:uid(),name:name,cat:rc.cat,porciones:rc.por,tiempo:rc.tiempo,notas:rc.notas,items:items,makeup:rc.makeup,pro:Object.assign(defPro(),{min:mins})});
+    made++;
+  });
+  impOpen=false;impData=null;persist();render();
+  toast(made+' receta'+(made===1?'':'s')+' importada'+(made===1?'':'s')+'.'+(skipped?' Se omitieron '+skipped+' ingredientes por unidad distinta.':''),!!skipped);
+}
+function downloadTemplate(){
+  if(!window.XLSX)return toast('No se pudo cargar el lector de Excel. Revisa tu conexión.',true);
+  var rows=[['Receta','Categoría','Porciones','Producto','Cantidad','Unidad','Precio por kg, L o unidad ($)'],
+    ['Torta de chocolate (ejemplo)','Tortas',10,'Harina de trigo',300,'g',1200],['','','','Azúcar',250,'g',1200],['','','','Huevo',4,'un',350],['','','','Leche entera',0.25,'L',1200],
+    ['Alfajores (ejemplo)','Galletas',24,'Harina de trigo',500,'g',1200],['','','','Mantequilla',200,'g',11400]];
+  var ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:30},{wch:16},{wch:10},{wch:26},{wch:10},{wch:8},{wch:30}];
+  var info=XLSX.utils.aoa_to_sheet([['Cómo llenar la plantilla'],['1. Una fila por ingrediente. Escribe el nombre de la receta en su primera fila; las filas de abajo la heredan si dejas la celda en blanco.'],['2. Unidad: g, kg, ml, L o un (unidad).'],['3. Precio: lo que cuesta un kilo, un litro o una unidad. Si el producto ya está en tu inventario se usa el precio del inventario.'],['4. Porciones: cuántas porciones rinde la receta completa. Las cantidades son para esa receta completa.'],['5. Borra las filas de ejemplo antes de subirla.']]);
+  info['!cols']=[{wch:120}];
+  var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Recetas');XLSX.utils.book_append_sheet(wb,info,'Instrucciones');
+  var buf=XLSX.write(wb,{type:'array',bookType:'xlsx'});
+  saveFile('plantilla-recetas.xlsx',buf,function(){XLSX.writeFile(wb,'plantilla-recetas.xlsx');toast('Plantilla descargada.');},'Plantilla guardada.');
 }
 
 /* ---------- acciones de inventario ---------- */
